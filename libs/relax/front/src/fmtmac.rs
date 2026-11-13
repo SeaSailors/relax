@@ -1126,10 +1126,11 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
             sp.precision = CountSpec::Star;
             i += 1;
         } else {
+            // `.` with no count is legal: rustc parses it as `Count::Implied`, which
+            // `FormatSpec::precision()` reports as *no* precision, and `Implied` is also the field's
+            // own default here (`Spec` above) — so the count passes straight through. Rejecting it
+            // made `write!(f, "{item:.e}")` (polars-io) an unloadable crate.
             let (p, ni) = count(&c, i)?;
-            if matches!(p, CountSpec::Implied) {
-                return Err("missing precision after `.` in format spec".to_string());
-            }
             sp.precision = p;
             i = ni;
         }

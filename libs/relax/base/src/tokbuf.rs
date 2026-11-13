@@ -240,10 +240,12 @@ impl TokBuf {
         self.put(T::Ident, &name);
     }
 
-    /// An identifier that stands for the source token at `origin` (hygiene: it resolves in the
-    /// context of that position).
-    pub fn word_at(&mut self, text: &str, origin: u32) {
-        self.word(text);
+    /// A name that stands for the source token at `origin` (hygiene: it resolves in the context of
+    /// that position), always as an **identifier**: a captured format argument's name is resolved by
+    /// the format machinery, never by the parser, and rustc's `format_args!` capture emits an `Ident`
+    /// token — so `{ref}` (for a `r#ref` binding), `{in}` and `{type}` are captures, not keywords.
+    pub fn ident_at(&mut self, text: &str, origin: u32) {
+        self.put(T::Ident, text);
         let t = self.toks[self.toks.len() - 1];
         self.origins.push((t.lo, origin, text.len() as u32));
     }

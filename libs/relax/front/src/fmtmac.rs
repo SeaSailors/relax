@@ -130,7 +130,7 @@ fn borrow(g: &mut Gen, s: &Src) {
     match s {
         Src::Expr(e) => tg!(g; & #expr(*e)),
         Src::RefTmp => tg!(g; && __relax_tmp),
-        Src::Capture(n, at) => tg!(g; & #word_at(n, *at)),
+        Src::Capture(n, at) => tg!(g; & #ident_at(n, *at)),
         Src::Local(t) => tg!(g; & (#word(t))),
         Src::Call0(t) => tg!(g; & (#word(t) ! ())),
         Src::Nested(b) => tg!(g; & (#append(b))),

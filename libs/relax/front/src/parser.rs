@@ -1049,6 +1049,23 @@ impl<'a> Parser<'a> {
 
     /// rustc_expand expand.rs: fully_expand_fragment visits attribute value expressions;
     /// rustc_attr_parsing parser.rs: expr_to_lit checks the expanded value.
+
+    /// Is the path's module part a module of *this* crate that has no parsed form yet, so a macro an
+    /// expansion of it makes cannot be known? Only a single-segment qualifier (`doc::m!`) counts:
+    /// anything deeper is a module of another crate, whose macros are its compiled exports.
+    fn qual_to_uncollected_module(&self, path: &Path) -> bool {
+        let Some(m) = self.macros.as_ref() else { return false };
+        let Some(cm) = m.table.crates.get(&self.krate) else { return false };
+        let segs = self.ast.segs(path.segs);
+        if segs.len() != 2 || path.global() { return false; }
+        let qual = String::from_utf8_lossy(self.bytes(segs[0].name.lo, segs[0].name.hi)).trim_start_matches("r#").to_string();
+        let cur = self.cur_module();
+        let want = format!("{cur}::{qual}");
+        // `mods` gains an entry when the module's own `mod` item is collected, which happens after
+        // the file declaring it, so "not there yet" is exactly "not expanded yet". A name that never
+        // becomes a module is therefore also left unchecked — a diagnostic this defers, not invents.
+        !cm.mods.contains(&want)
+    }
     fn attr_value_macro(&mut self, toks: TokRange) -> PResult<()> {
         let (lo, hi) = (toks.lo as usize, toks.hi as usize);
         if hi <= lo + 3 || hi > self.toks.len() { return Ok(()); }
@@ -1077,6 +1094,14 @@ impl<'a> Parser<'a> {
             if crate::builtins::builtin_macro_def(&name).is_none() { return Ok(()); }
         } else if self.rules_macro(&path).is_none() {
             if self.name_imported(&name, self.pos) || crate::program::BUILTIN_MACROS.contains(&name.as_str()) || fmtmac::is_builtin(name.as_bytes()) { return Ok(()); }
+            // A macro a *macro expansion* makes exists only once the module that makes it is
+            // expanded: written definitions are prescanned, expansion-made ones are not, and module
+            // order decides which is first (`mod bint;` precedes `mod doc;` in bnum's lib.rs, and
+            // `bint`'s expansion calls `doc::cast_unsigned!`, which `link_doc_comment_method!`
+            // generates in `doc`). rustc resolves it; refusing it here made a whole crate — and so
+            // a whole graph — unloadable, so a path into a module this crate has no parsed form of
+            // yet is left to the value's own check instead of being reported as missing.
+            if self.qual_to_uncollected_module(&path) { return Ok(()); }
             return Err(PErr { pos: err_pos, msg: format!("cannot find macro `{name}` in this scope") });
         }
         let value = self.eager_macro_arg(TokRange { lo: (i + 1) as u32, hi: hi as u32 })?;

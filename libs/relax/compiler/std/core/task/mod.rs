@@ -89,10 +89,23 @@ impl<T> From<T> for Poll<T> {
 }
 
 /// A raw waker: data pointer + vtable.
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct RawWaker {
     data: *const (),
     vtable: &'static RawWakerVTable,
+}
+
+/// std compares the vtable by ADDRESS (`ptr::eq`), not by its contents: two statics with identical
+/// function pointers are still different vtables, and `Waker::will_wake` must say so. Deriving
+/// `PartialEq` (which compares the four fn pointers by value) makes them equal, and every runtime
+/// that reuses a stored waker when `will_wake` is true — tokio's timer wheel among them — then wakes
+/// the WRONG task: a spawned task awaiting `sleep` is never resumed, while the task whose waker it
+/// compared against is woken spuriously. Measured: `repro-waker`'s
+/// `will_wake_is_false_for_two_distinct_vtables_with_the_same_functions` fails before this change.
+impl PartialEq for RawWaker {
+    fn eq(&self, other: &RawWaker) -> bool {
+        self.data == other.data && crate::ptr::eq(self.vtable as *const RawWakerVTable as *const u8, other.vtable as *const RawWakerVTable as *const u8)
+    }
 }
 
 impl RawWaker {

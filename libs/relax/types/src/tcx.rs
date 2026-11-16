@@ -3362,7 +3362,18 @@ impl Tcx {
             }
             for &item in &prog.traits[prog.def(tr.trait_ref.def_id).sub as usize] {
                 let d = prog.def(item);
-                if d.name == name && d.kind == DefKind::AssocTy { result.push((item, predicate.clone())); break; }
+                if d.name == name && d.kind == DefKind::AssocTy {
+                    // The same trait reached by two paths of the bound graph is one candidate, not
+                    // two: its supertrait instantiations differ in their (equivalent) arguments, so
+                    // the predicate-level `seen` above keeps both and every crate that names a GAT
+                    // through a supertrait reports E0221 ("from X, X"). rustc's
+                    // probe_single_bound_for_assoc_item walks the elaborated bounds, whose
+                    // per-trait dedup makes this one candidate; ambiguity needs two *traits*.
+                    if !result.iter().any(|(i, _)| *i == item) {
+                        result.push((item, predicate.clone()));
+                    }
+                    break;
+                }
             }
         }
         result

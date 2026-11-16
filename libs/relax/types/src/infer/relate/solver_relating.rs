@@ -93,6 +93,28 @@ impl<'tcx> TypeRelation<'tcx> for SolverRelating<'_, 'tcx> {
             (ConstKind::Infer(InferConst::Var(av)), ConstKind::Infer(InferConst::Var(bv))) => {
                 infcx.inner.borrow_mut().const_unification_table().union(av.0, bv.0);
             }
+            // rustc_type_ir/src/relate.rs:202-236 (super_relate_consts): a constant that is
+            // neither a value nor a projection is related *structurally* -- the same definition
+            // with equal arguments, or Mismatch -- and it is not evaluated. Two distinct
+            // anonymous constants are therefore distinct: `impl B<{size_of::<u16>()}>` and
+            // `impl B<{size_of::<u32>()}>` do not overlap.
+            //
+            // Coherence is where that matters and where the projections below are wrong: the
+            // background coherence check of a run starts before the anonymous constants of the
+            // crates it loads are type-checked, so evaluating one answers TooGeneric
+            // (goals.rs evaluate_const -> Ok(None)), the projection goal stays ambiguous, and
+            // coherence may not read an ambiguity as disjointness. That reported zerovec's four
+            // `RawBytesULE<{size_of::<T>()}>` inherent impls as E0592 duplicates of each other.
+            // Everywhere else the deferred goal is what makes two occurrences of the same
+            // unevaluated `[u8; {SIZE}]` unify once their bodies are known, so the structural
+            // rule is kept to coherence, as the reference's own typing mode does.
+            (ConstKind::Alias(_, aa), ConstKind::Alias(_, ba))
+                if infcx.typing_mode.get().is_coherence()
+                    && !matches!(aa.kind, crate::consts::AliasConstKind::Projection { .. })
+                    && !matches!(ba.kind, crate::consts::AliasConstKind::Projection { .. }) =>
+            {
+                structurally_relate_consts(self, a, b)?;
+            }
             (ConstKind::Alias(IsRigid::No, alias), _) => self.register_predicate(Predicate::dummy(PredicateKind::Clause(ClauseKind::Projection(ProjectionClause { projection_term: AliasTerm::Const(alias), term: Term::Const(b) })))),
             (_, ConstKind::Alias(IsRigid::No, alias)) => self.register_predicate(Predicate::dummy(PredicateKind::Clause(ClauseKind::Projection(ProjectionClause { projection_term: AliasTerm::Const(alias), term: Term::Const(a) })))),
             (ConstKind::Infer(InferConst::Var(vid)), _) => infcx.instantiate_const_var(self, true, vid.0, b)?,

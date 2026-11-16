@@ -2331,6 +2331,18 @@ impl ImportLookup<'_> {
         let r = Res { table: &scope.table };
         let ids = |(k, m): (&str, &str)| (names.id(k), names.id(m));
         let (ks, ms) = (names.str(k), names.str(m));
+        // An explicit `use` in this module names what a single-segment path denotes, so it is
+        // consulted before the module resolve_mod finds: a derive writes `use ::serde as
+        // _serde;` beside a module-shaped name of the same spelling, and the binding is what
+        // rustc resolves.
+        if path.len() == 1 {
+            if let Some(bound) = self.binding(k, m, path[0]) {
+                let loopback = bound.len() == 1 && bound[0] == path[0];
+                if !loopback {
+                    if let Some(at) = with_strs(names, &bound, |ps| r.resolve_mod(ks, ms, ps).map(ids)) { return Some(at); }
+                }
+            }
+        }
         if let Some(at) = with_strs(names, path, |ps| r.resolve_mod(ks, ms, ps).map(ids)) { return Some(at); }
         let first = names.str(path[0]);
         let (mut at, rest) = match first {

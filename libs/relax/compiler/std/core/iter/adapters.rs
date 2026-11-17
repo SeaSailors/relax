@@ -161,6 +161,12 @@ impl<I> Enumerate<I> {
     }
 }
 
+impl<I: Default> Default for Enumerate<I> {
+    fn default() -> Self {
+        Enumerate::new(Default::default())
+    }
+}
+
 impl<I: Iterator> Iterator for Enumerate<I> {
     type Item = (usize, I::Item);
     fn next(&mut self) -> Option<(usize, I::Item)> {
@@ -516,6 +522,12 @@ impl<I> Rev<I> {
     }
 }
 
+impl<I: Default> Default for Rev<I> {
+    fn default() -> Self {
+        Rev::new(Default::default())
+    }
+}
+
 impl<I: DoubleEndedIterator> Iterator for Rev<I> {
     type Item = I::Item;
     fn next(&mut self) -> Option<I::Item> {
@@ -840,6 +852,12 @@ impl<A, B> Chain<A, B> {
     }
 }
 
+impl<A: Default, B: Default> Default for Chain<A, B> {
+    fn default() -> Self {
+        Chain::new(Default::default(), Default::default())
+    }
+}
+
 impl<A: Iterator, B: Iterator<Item = A::Item>> Iterator for Chain<A, B> {
     type Item = A::Item;
     fn next(&mut self) -> Option<A::Item> {
@@ -964,6 +982,12 @@ impl<I> Cloned<I> {
     }
 }
 
+impl<I: Default> Default for Cloned<I> {
+    fn default() -> Self {
+        Cloned::new(Default::default())
+    }
+}
+
 impl<'a, T: 'a + Clone, I: Iterator<Item = &'a T>> Iterator for Cloned<I> {
     type Item = T;
     fn next(&mut self) -> Option<T> {
@@ -1000,6 +1024,12 @@ pub struct Copied<I> {
 impl<I> Copied<I> {
     pub(crate) const fn new(it: I) -> Copied<I> {
         Copied { it }
+    }
+}
+
+impl<I: Default> Default for Copied<I> {
+    fn default() -> Self {
+        Copied::new(Default::default())
     }
 }
 
@@ -1407,6 +1437,15 @@ where
     }
 }
 
+impl<I: Default + Iterator> Default for Flatten<I>
+where
+    I::Item: IntoIterator,
+{
+    fn default() -> Self {
+        Flatten::new(Default::default())
+    }
+}
+
 impl<I: Iterator + Clone> Clone for Flatten<I>
 where
     I::Item: IntoIterator,
@@ -1508,6 +1547,12 @@ pub struct Fuse<I> {
 impl<I> Fuse<I> {
     pub(crate) const fn new(iter: I) -> Fuse<I> {
         Fuse { iter: Some(iter) }
+    }
+}
+
+impl<I: Default> Default for Fuse<I> {
+    fn default() -> Self {
+        Fuse::new(Default::default())
     }
 }
 

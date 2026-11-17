@@ -2997,7 +2997,9 @@ impl<'a> Fcx<'a> {
         let resolved = self.tcx.resolve_type_path_def(self.prog, self.file, self.module, path);
         let alias = resolved.is_some_and(|d| self.prog.def(d).kind == DefKind::TypeAlias);
         if !alias {
-            if n < 2 || (s0.kind() != SegKind::SelfType && !self.env.names.contains(&self.sym(s0.name))) {
+            let s0_sym = self.sym(s0.name);
+            let param = s0.kind() != SegKind::SelfType && self.env.names.contains(&s0_sym) && !self.type_param_hidden(s0_sym);
+            if n < 2 || !param {
                 return None;
             }
             if resolved.is_some_and(|d| matches!(self.prog.def(d).kind, DefKind::Struct | DefKind::Union | DefKind::Variant)) {
@@ -3297,7 +3299,7 @@ impl<'a> Fcx<'a> {
         }
         if segs.len() == 1 {
             // a generic parameter shadows an item of the same name
-            if segs[0].0 == SegKind::Ident && !path.global() && self.env.names.iter().take(self.b.args.len()).any(|n| *n == segs[0].1) {
+            if segs[0].0 == SegKind::Ident && !path.global() && !self.type_param_hidden(segs[0].1) && self.env.names.iter().take(self.b.args.len()).any(|n| *n == segs[0].1) {
                 let msg = format!("E0574: expected struct, variant or union type, found type parameter `{}`", prog.syms.str(segs[0].1));
                 self.err(path.lo, msg);
                 return Res::Err;
@@ -3945,6 +3947,7 @@ impl<'a> Fcx<'a> {
         let first_is_param = !path.global()
             && path.no_qself()
             && segs[0].0 == SegKind::Ident
+            && !self.type_param_hidden(segs[0].1)
             && self.env.names.iter().take(self.b.args.len()).enumerate()
                 .any(|(i, nm)| *nm == segs[0].1 && !self.env.consts.iter().any(|c| c.0 as usize == i));
         let parent = if (segs[0].0 == SegKind::SelfType && n == 2) || first_is_param {
@@ -4053,7 +4056,7 @@ impl<'a> Fcx<'a> {
                 SegKind::SelfType => self.env.trait_def.is_some() || matches!(self.tcx.tys.kind(self_ty), TyKind::Param(_)),
                 _ => {
                     let s0 = self.sym(self.ast().segs(path.segs)[0].name);
-                    self.env.names.iter().take(self.b.args.len()).any(|nm| *nm == s0)
+                    !self.type_param_hidden(s0) && self.env.names.iter().take(self.b.args.len()).any(|nm| *nm == s0)
                 }
             };
         if prefix_is_param {
@@ -4820,6 +4823,16 @@ impl<'a> Fcx<'a> {
         lt
     }
 
+    /// rustc_resolve/src/late.rs ribs: an item declared in a body block (`struct`, `type`,
+    /// `use ... as`) is in a rib inner to the item's own generics, so it hides a type parameter
+    /// of the same name for every path in that block -- polars-core's
+    /// `binary_unchecked_same_type<T, U, F>` writes `use StatisticsFlags as F;` and then
+    /// `F::IS_SORTED_ANY`, which is the struct's associated const. `lower_path_ty` consults this
+    /// and the paths that decide "is the first segment a parameter" did not.
+    fn type_param_hidden(&self, s: Sym) -> bool {
+        self.env.owner.is_some_and(|o| self.prog.lookup_in_body_blocks(self.module, o, s, true).is_some())
+    }
+
     /// Type named by the first `n` segments of a path (for `Type::item`).
     fn type_of_prefix(&mut self, path: &Path, n: usize) -> Option<TyId> {
         let prog = self.prog;
@@ -4827,11 +4840,12 @@ impl<'a> Fcx<'a> {
             let st = self.env.self_ty?;
             return Some(st);
         }
-        // generic param `T::item`
+        // generic param `T::item`, unless a body block's item of the name hides it
         if n == 1 {
             let s = self.sym(self.ast().segs(path.segs)[0].name);
+            let hidden = self.type_param_hidden(s);
             for (i, nm) in self.env.names.iter().enumerate() {
-                if *nm == s && i < self.b.args.len() {
+                if *nm == s && i < self.b.args.len() && !hidden {
                     return Some(self.b.args[i]);
                 }
             }
@@ -5413,10 +5427,20 @@ impl<'a> Fcx<'a> {
                     // a cast is first a coercion when one applies (rustc cast.rs
                     // try_coercion_cast): `&s as &str` is a deref coercion of &String
                     let (sa, sb) = (self.shallow(*a), self.shallow(*bt));
-                    if (*m1 || !*m2) && sa != sb && !matches!(self.tcx.tys.kind(sb), TyKind::Infer(_) | TyKind::Dyn(..)) {
+                    let spanned = !matches!(self.tcx.tys.kind(sb), TyKind::Infer(_) | TyKind::Dyn(..));
+                    let mut derefed = false;
+                    if (*m1 || !*m2) && sa != sb && spanned {
                         if let Some(derefs) = self.deref_coercion(sa, sb) {
                             self.set_deref_ref(x.0, derefs, None);
+                            derefed = true;
                         }
+                    }
+                    // `&expr as &U` where the source pointee is still open: the cast is a
+                    // coercion and it is what decides the pointee (rustc cast.rs check_ref_cast
+                    // -> coerce). datafusion-functions-aggregate's `s.as_ref() as &[u8]` with
+                    // `Vec<u8>`'s two `AsRef` impls: the method's trait argument is the pointee.
+                    if !derefed && spanned && self.has_open_infer(sa) {
+                        self.coerce_or_unify(sa, sb, Some(*x), lo);
                     }
                 }
                 if self.deferred_casts.len() == deferred_before { self.record_cast_borrow(*x, xt, target); }

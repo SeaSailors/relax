@@ -1369,6 +1369,14 @@ impl Program {
         self.crates[krate as usize].context = self.pool.as_ref().unwrap().context(ci);
         let ahead = self.pool.as_ref().unwrap().take_ahead(ci);
         self.module_probes.extend(ahead.probes.iter().cloned());
+        // `ahead.image`: this crate's parse came from its crate image, so the program makes no
+        // std parse for the proc-macro world to take (shared_std_put, load_std_crates_with ends
+        // the sharing after a load that ran). A world built during such a load waited 10 s per
+        // std file for a parse that was never coming (shared_std_wait: "never expected"): a
+        // sandsea boot whose std came from images stalled 18 x 10 s that way in one load.
+        if ahead.image && matches!(kname.as_str(), "core" | "alloc" | "std") {
+            share_std_end();
+        }
         if self.record_front {
             // A restored crate already owns its disk metadata; do not re-encode its macro
             // definitions into a second heap buffer during a warm boot.
